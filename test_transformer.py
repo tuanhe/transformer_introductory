@@ -49,10 +49,10 @@ src_vocab = {'P': 0, '我': 1, '有': 2, '一': 3, '个': 4, '好': 5,
 src_idx2word = {i: w for i, w in enumerate(src_vocab)}
 src_vocab_size = len(src_vocab)
 
-tgt_vocab = {'P': 0, 'I': 1, 'have': 2, 'a': 3, 'good': 4, 'friend': 5, 
+target_vocabulary = {'P': 0, 'I': 1, 'have': 2, 'a': 3, 'good': 4, 'friend': 5, 
              'zero': 6, 'girl': 7,  'boy': 8, 'S': 9, 'E': 10, '.': 11}
-idx2word = {i: w for i, w in enumerate(tgt_vocab)}
-tgt_vocab_size = len(tgt_vocab)
+idx2word = {i: w for i, w in enumerate(target_vocabulary)}
+target_vocabulary_size = len(target_vocabulary)
 
 src_len = 8  # （源句子的长度）enc_input max sequence length
 tgt_len = 7  # dec_input(=dec_output) max sequence length
@@ -69,15 +69,14 @@ n_heads = 8  # number of heads in Multi-Head Attention（有几套头）
 # ==============================================================================================
 # 数据构建
 
-
 def make_data(sentences):
     """把单词序列转换为数字序列"""
     enc_inputs, dec_inputs, dec_outputs = [], [], []
     for i in range(len(sentences)):
  
         enc_input = [[src_vocab[n] for n in sentences[i][0].split()]]
-        dec_input = [[tgt_vocab[n] for n in sentences[i][1].split()]]
-        dec_output = [[tgt_vocab[n] for n in sentences[i][2].split()]]
+        dec_input = [[target_vocabulary[n] for n in sentences[i][1].split()]]
+        dec_output = [[target_vocabulary[n] for n in sentences[i][2].split()]]
 
         #[[1, 2, 3, 4, 5, 6, 7, 0], [1, 2, 8, 4, 9, 6, 7, 0], [1, 2, 3, 4, 10, 6, 7, 0]]
         enc_inputs.extend(enc_input)
@@ -87,10 +86,6 @@ def make_data(sentences):
         dec_outputs.extend(dec_output)
 
     return torch.LongTensor(enc_inputs), torch.LongTensor(dec_inputs), torch.LongTensor(dec_outputs)
-
-
-
-
 
 class MyDataSet(Data.Dataset):
     """自定义DataLoader"""
@@ -120,6 +115,7 @@ class PositionalEncoding(nn.Module):
 
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        print("position shape:\n", position.shape)
         div_term = torch.exp(torch.arange(
             0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
@@ -217,15 +213,21 @@ class MultiHeadAttention(nn.Module):
         input_V: [batch_size, len_v(=len_k), d_model]
         attn_mask: [batch_size, seq_len, seq_len]
         """
-        residual, batch_size = input_Q, input_Q.size(0)
+        # 将输入作为残差连接的起点
+        residual = input_Q
+        batch_size = input_Q.size(0)
+        # residual, batch_size = input_Q, input_Q.size(0)
         # 下面的多头的参数矩阵是放在一起做线性变换的，然后再拆成多个头，这是工程实现的技巧
         # B: batch_size, S:seq_len, D: dim
         # (B, S, D) -proj-> (B, S, D_new) -split-> (B, S, Head, W) -trans-> (B, Head, S, W)
         #           线性变换               拆成多头
 
         # Q: [batch_size, n_heads, len_q, d_k]
-        Q = self.W_Q(input_Q).view(batch_size, -1,
-                                   n_heads, d_k).transpose(1, 2)
+        # Q = self.W_Q(input_Q).view(batch_size, -1,
+        #                           n_heads, d_k).transpose(1, 2)
+        Q = self.W_Q(input_Q)  # 使用 W_Q 线性变换, 它的结果输出为(batch_size, seq_length, d_model)
+        Q = Q.view(batch_size, -1, n_heads, d_k)  # 重塑张量形状
+        Q = Q.transpose(1, 2)  # 转置张量维度
         # K: [batch_size, n_heads, len_k, d_k] # K和V的长度一定相同，维度可以不同
         K = self.W_K(input_K).view(batch_size, -1,
                                    n_heads, d_k).transpose(1, 2)
@@ -350,7 +352,7 @@ class Decoder(nn.Module):
     def __init__(self):
         super(Decoder, self).__init__()
         self.tgt_emb = nn.Embedding(
-            tgt_vocab_size, d_model)  # Decoder输入的embed词表
+            target_vocabulary_size, d_model)  # Decoder输入的embed词表
         self.pos_emb = PositionalEncoding(d_model)
         self.layers = nn.ModuleList()
         for i in range(n_blocks):
@@ -404,7 +406,7 @@ class Transformer(nn.Module):
         self.encoder = Encoder().to(device)
         self.decoder = Decoder().to(device)
         self.projection = nn.Linear(
-            d_model, tgt_vocab_size, bias=False).to(device)
+            d_model, target_vocabulary_size, bias=False).to(device)
 
     def forward(self, enc_inputs, dec_inputs):
         """Transformers的输入：两个序列
@@ -412,7 +414,7 @@ class Transformer(nn.Module):
         dec_inputs: [batch_size, tgt_len]
         """
         # tensor to store decoder outputs
-        # outputs = torch.zeros(batch_size, tgt_len, tgt_vocab_size).to(self.device)
+        # outputs = torch.zeros(batch_size, tgt_len, target_vocabulary_size).to(self.device)
 
         # enc_outputs: [batch_size, src_len, d_model], enc_self_attns: [n_blocks, batch_size, n_heads, src_len, src_len]
         # 经过Encoder网络后，得到的输出还是[batch_size, src_len, d_model]
@@ -420,7 +422,7 @@ class Transformer(nn.Module):
         # dec_outputs: [batch_size, tgt_len, d_model], dec_self_attns: [n_blocks, batch_size, n_heads, tgt_len, tgt_len], dec_enc_attn: [n_blocks, batch_size, tgt_len, src_len]
         dec_outputs, dec_self_attns, dec_enc_attns = self.decoder(
             dec_inputs, enc_inputs, enc_outputs)
-        # dec_outputs: [batch_size, tgt_len, d_model] -> dec_logits: [batch_size, tgt_len, tgt_vocab_size]
+        # dec_outputs: [batch_size, tgt_len, d_model] -> dec_logits: [batch_size, tgt_len, target_vocabulary_size]
         dec_logits = self.projection(dec_outputs)
         return dec_logits.view(-1, dec_logits.size(-1)), enc_self_attns, dec_self_attns, dec_enc_attns
 
@@ -444,14 +446,14 @@ def trainning(training_dataset):
             dec_inputs: [batch_size, tgt_len]
             dec_outputs: [batch_size, tgt_len]
             """
-            enc_inputs, dec_inputs, dec_outputs = enc_inputs.to(
-                device), dec_inputs.to(device), dec_outputs.to(device)
-            # outputs: [batch_size * tgt_len, tgt_vocab_size]
-            outputs, enc_self_attns, dec_self_attns, dec_enc_attns = model(
-                enc_inputs, dec_inputs)
-            # dec_outputs.view(-1):[batch_size * tgt_len * tgt_vocab_size]
+            enc_inputs = enc_inputs.to(device)
+            dec_inputs = dec_inputs.to(device)
+            dec_outputs = dec_outputs.to(device)
+            # outputs: [batch_size * tgt_len, target_vocabulary_size]
+            outputs, enc_self_attns, dec_self_attns, dec_enc_attns = model(enc_inputs, dec_inputs)
+            # dec_outputs.view(-1):[batch_size * tgt_len * target_vocabulary_size]
             loss = criterion(outputs, dec_outputs.view(-1))
-            print('Epoch:', '%04d' % (epoch + 1), 'loss =', '{:.6f}'.format(loss))
+            # print('Epoch:', '%04d' % (epoch + 1), 'loss =', '{:.6f}'.format(loss))
 
             optimizer.zero_grad()
             loss.backward()
@@ -472,14 +474,25 @@ def greedy_decoder(model, enc_input, start_symbol):
     :return: The target input
     """
     enc_outputs, enc_self_attns = model.encoder(enc_input)
+    print("enc_outputs:", enc_outputs)
+    print("enc_outputs shape:", enc_outputs.shape)
     # 初始化一个空的tensor: tensor([], size=(1, 0), dtype=torch.int64)
     dec_input = torch.zeros(1, 0).type_as(enc_input.data)
+    print("Inference dec_input:" , dec_input.data)
     terminal = False
     next_symbol = start_symbol
     while not terminal:
         # 预测阶段：dec_input序列会一点点变长（每次添加一个新预测出来的单词）
-        dec_input = torch.cat([dec_input.to(device), torch.tensor([[next_symbol]], dtype=enc_input.dtype).to(device)],
-                              -1)
+        dec_input = dec_input.to(device)
+        # 创建一个形状为(1, 1)的张量，其中包含了一个整数next_symbol，并将其移动到指定的设备上
+        next_symbol_tensor = torch.tensor([[next_symbol]], dtype=enc_input.dtype).to(device)
+        # 使用torch.cat函数将两个张量连接起来，得到一个新的张量
+        dec_input = torch.cat([dec_input, next_symbol_tensor], dim=-1)
+        print(dec_input)
+        
+        #dec_input = torch.cat([dec_input.to(device), torch.tensor([[next_symbol]], dtype=enc_input.dtype).to(device)],
+        #                      -1)
+
         dec_outputs, _, _ = model.decoder(dec_input, enc_input, enc_outputs)
         projected = model.projection(dec_outputs)
         prob = projected.squeeze(0).max(dim=-1, keepdim=False)[1]
@@ -488,7 +501,7 @@ def greedy_decoder(model, enc_input, start_symbol):
         # 拿出当前预测的单词(数字)。我们用x'_t对应的输出z_t去预测下一个单词的概率，不用z_1,z_2..z_{t-1}
         next_word = prob.data[-1]
         next_symbol = next_word
-        if next_symbol == tgt_vocab["E"]:
+        if next_symbol == target_vocabulary["E"]:
             terminal = True
         # print(next_word)
 
@@ -504,13 +517,13 @@ def greedy_decoder(model, enc_input, start_symbol):
 # 测试集
 inference_sentences = [
     # enc_input                dec_input           dec_output
-    ['我 有 零 个 女 朋 友 P', '', '']
+    ['我 有 零 个 女 朋 友 P', '', ''],
+    ['我 有 一 个 女 朋 友 P', '', '']
 ]
 
 def inference(mode, inference_data):
     enc_inputs, dec_inputs, dec_outputs = make_data(inference_data)
-    test_loader = Data.DataLoader(
-        MyDataSet(enc_inputs, dec_inputs, dec_outputs), 2, True)
+    test_loader = Data.DataLoader(MyDataSet(enc_inputs, dec_inputs, dec_outputs), 2, True)
     enc_inputs, _, _ = next(iter(test_loader))
 
     print()
@@ -518,7 +531,8 @@ def inference(mode, inference_data):
     print("利用训练好的Transformer模型将中文句子'我 有 零 个 女 朋 友' 翻译成英文句子: ")
     for i in range(len(enc_inputs)):
         greedy_dec_predict = greedy_decoder(model, enc_inputs[i].view(
-            1, -1).to(device), start_symbol=tgt_vocab["S"])
+            1, -1).to(device), start_symbol=target_vocabulary["S"])
+        print("greedy_dec_predict:\n", greedy_dec_predict)
         print(enc_inputs[i], '->', greedy_dec_predict.squeeze())
         print([src_idx2word[t.item()] for t in enc_inputs[i]], '->',
               [idx2word[n.item()] for n in greedy_dec_predict.squeeze()])
