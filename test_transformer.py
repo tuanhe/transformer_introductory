@@ -14,6 +14,7 @@ import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 import torch.utils.data as Data
+import argparse
 
 #device = 'cpu'
 device = 'cuda'
@@ -29,7 +30,7 @@ epochs = 100
 # P: Symbol that will fill in blank sequence if current batch data size is short than time steps
 
 # 训练集
-sentences = [
+training_sentences = [
     # 中文和英语的单词个数不要求相同
     # enc_input                dec_input           dec_output
     ['我 有 一 个 好 朋 友 P', 'S I have a good friend .', 'I have a good friend . E'],
@@ -43,13 +44,13 @@ sentences = [
 
 # 中文和英语的单词要分开建立词库
 # Padding Should be Zero
-src_vocab = {'P': 0, '我': 1, '有': 2, '一': 3,
-             '个': 4, '好': 5, '朋': 6, '友': 7, '零': 8, '女': 9, '男': 10}
+src_vocab = {'P': 0, '我': 1, '有': 2, '一': 3, '个': 4, '好': 5,
+             '朋': 6, '友': 7, '零': 8, '女': 9, '男': 10}
 src_idx2word = {i: w for i, w in enumerate(src_vocab)}
 src_vocab_size = len(src_vocab)
 
-tgt_vocab = {'P': 0, 'I': 1, 'have': 2, 'a': 3, 'good': 4,
-             'friend': 5, 'zero': 6, 'girl': 7,  'boy': 8, 'S': 9, 'E': 10, '.': 11}
+tgt_vocab = {'P': 0, 'I': 1, 'have': 2, 'a': 3, 'good': 4, 'friend': 5, 
+             'zero': 6, 'girl': 7,  'boy': 8, 'S': 9, 'E': 10, '.': 11}
 idx2word = {i: w for i, w in enumerate(tgt_vocab)}
 tgt_vocab_size = len(tgt_vocab)
 
@@ -88,7 +89,7 @@ def make_data(sentences):
     return torch.LongTensor(enc_inputs), torch.LongTensor(dec_inputs), torch.LongTensor(dec_outputs)
 
 
-enc_inputs, dec_inputs, dec_outputs = make_data(sentences)
+
 
 
 class MyDataSet(Data.Dataset):
@@ -107,8 +108,6 @@ class MyDataSet(Data.Dataset):
         return self.enc_inputs[idx], self.dec_inputs[idx], self.dec_outputs[idx]
 
 
-loader = Data.DataLoader(
-    MyDataSet(enc_inputs, dec_inputs, dec_outputs), 2, True)
 
 
 # ====================================================================================================
@@ -353,8 +352,12 @@ class Decoder(nn.Module):
         self.tgt_emb = nn.Embedding(
             tgt_vocab_size, d_model)  # Decoder输入的embed词表
         self.pos_emb = PositionalEncoding(d_model)
-        self.layers = nn.ModuleList([DecoderLayer()
-                                    for _ in range(n_blocks)])  # Decoder的blocks
+        self.layers = nn.ModuleList()
+        for i in range(n_blocks):
+            self.layers.append(DecoderLayer())
+
+        # self.layers = nn.ModuleList([DecoderLayer()
+        #                            for _ in range(n_blocks)])  # Decoder的blocks
 
     def forward(self, dec_inputs, enc_inputs, enc_outputs):
         """
@@ -421,34 +424,42 @@ class Transformer(nn.Module):
         dec_logits = self.projection(dec_outputs)
         return dec_logits.view(-1, dec_logits.size(-1)), enc_self_attns, dec_self_attns, dec_enc_attns
 
+def trainning(training_dataset):
+    print("Data training")
 
-model = Transformer().to(device)
-# 这里的损失函数里面设置了一个参数 ignore_index=0，因为 "pad" 这个单词的索引为 0，这样设置以后，就不会计算 "pad" 的损失（因为本来 "pad" 也没有意义，不需要计算）
-criterion = nn.CrossEntropyLoss(ignore_index=0)
-optimizer = optim.SGD(model.parameters(), lr=1e-3,
-                      momentum=0.99)  # 用adam的话效果不好
+    enc_inputs, dec_inputs, dec_outputs = make_data(training_dataset)
+    loader = Data.DataLoader(MyDataSet(enc_inputs, dec_inputs, dec_outputs), 2, True)
 
-# ====================================================================================================
-for epoch in range(epochs):
-    for enc_inputs, dec_inputs, dec_outputs in loader:
-        """
-        enc_inputs: [batch_size, src_len]
-        dec_inputs: [batch_size, tgt_len]
-        dec_outputs: [batch_size, tgt_len]
-        """
-        enc_inputs, dec_inputs, dec_outputs = enc_inputs.to(
-            device), dec_inputs.to(device), dec_outputs.to(device)
-        # outputs: [batch_size * tgt_len, tgt_vocab_size]
-        outputs, enc_self_attns, dec_self_attns, dec_enc_attns = model(
-            enc_inputs, dec_inputs)
-        # dec_outputs.view(-1):[batch_size * tgt_len * tgt_vocab_size]
-        loss = criterion(outputs, dec_outputs.view(-1))
-        print('Epoch:', '%04d' % (epoch + 1), 'loss =', '{:.6f}'.format(loss))
+    model = Transformer().to(device)
+    # 这里的损失函数里面设置了一个参数 ignore_index=0，因为 "pad" 这个单词的索引为 0，这样设置以后，就不会计算 "pad" 的损失（因为本来 "pad" 也没有意义，不需要计算）
+    criterion = nn.CrossEntropyLoss(ignore_index=0)
+    optimizer = optim.SGD(model.parameters(), lr=1e-3,
+                          momentum=0.99)  # 用adam的话效果不好
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    # ====================================================================================================
+    for epoch in range(epochs):
+        for enc_inputs, dec_inputs, dec_outputs in loader:
+            """
+            enc_inputs: [batch_size, src_len]
+            dec_inputs: [batch_size, tgt_len]
+            dec_outputs: [batch_size, tgt_len]
+            """
+            enc_inputs, dec_inputs, dec_outputs = enc_inputs.to(
+                device), dec_inputs.to(device), dec_outputs.to(device)
+            # outputs: [batch_size * tgt_len, tgt_vocab_size]
+            outputs, enc_self_attns, dec_self_attns, dec_enc_attns = model(
+                enc_inputs, dec_inputs)
+            # dec_outputs.view(-1):[batch_size * tgt_len * tgt_vocab_size]
+            loss = criterion(outputs, dec_outputs.view(-1))
+            print('Epoch:', '%04d' % (epoch + 1), 'loss =', '{:.6f}'.format(loss))
 
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+
+    print("Training done")
+    return model
 
 def greedy_decoder(model, enc_input, start_symbol):
     """贪心编码
@@ -491,25 +502,32 @@ def greedy_decoder(model, enc_input, start_symbol):
 # ==========================================================================================
 # 预测阶段
 # 测试集
-sentences = [
+inference_sentences = [
     # enc_input                dec_input           dec_output
     ['我 有 零 个 女 朋 友 P', '', '']
 ]
 
-enc_inputs, dec_inputs, dec_outputs = make_data(sentences)
-test_loader = Data.DataLoader(
-    MyDataSet(enc_inputs, dec_inputs, dec_outputs), 2, True)
-enc_inputs, _, _ = next(iter(test_loader))
+def inference(mode, inference_data):
+    enc_inputs, dec_inputs, dec_outputs = make_data(inference_data)
+    test_loader = Data.DataLoader(
+        MyDataSet(enc_inputs, dec_inputs, dec_outputs), 2, True)
+    enc_inputs, _, _ = next(iter(test_loader))
 
-print()
-print("="*30)
-print("利用训练好的Transformer模型将中文句子'我 有 零 个 女 朋 友' 翻译成英文句子: ")
-for i in range(len(enc_inputs)):
-    greedy_dec_predict = greedy_decoder(model, enc_inputs[i].view(
-        1, -1).to(device), start_symbol=tgt_vocab["S"])
-    print(enc_inputs[i], '->', greedy_dec_predict.squeeze())
-    print([src_idx2word[t.item()] for t in enc_inputs[i]], '->',
-          [idx2word[n.item()] for n in greedy_dec_predict.squeeze()])
+    print()
+    print("="*30)
+    print("利用训练好的Transformer模型将中文句子'我 有 零 个 女 朋 友' 翻译成英文句子: ")
+    for i in range(len(enc_inputs)):
+        greedy_dec_predict = greedy_decoder(model, enc_inputs[i].view(
+            1, -1).to(device), start_symbol=tgt_vocab["S"])
+        print(enc_inputs[i], '->', greedy_dec_predict.squeeze())
+        print([src_idx2word[t.item()] for t in enc_inputs[i]], '->',
+              [idx2word[n.item()] for n in greedy_dec_predict.squeeze()])
 
 
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--argument', type=str, default='default_value', help='an example argument')
+    args = parser.parse_args()
+    model = trainning(training_sentences)
+    inference(model, inference_sentences)
 
